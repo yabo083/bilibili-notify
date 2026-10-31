@@ -1,0 +1,58 @@
+--- a/lib/index.cjs
++++ b/lib/index.cjs
+@@ -98,7 +98,26 @@
+ 	start() {
+ 		this.generation += 1;
+ 		this.disposed = false;
+-		if (this.master) this.refreshMasterReachability();
++		// 启动瞬间 adapter 的 bot 往往还没 READY。实测 onebot 反向 WS 6~10s 才上线，
++		// 固定 10s 单次判定正好落在边界，导致每次启动必报一次假 [E]（7 天 118 次启动 118 次误报，
++		// 且 refreshMasterReachability 只在边沿触发，误报后进程内永不纠正）。
++		// 改为有界轮询：2s 一次、最多 90s。可达即静默置 true（若此前为不可达会打「已恢复可达」），
++		// 只有超时仍不可达才走边沿逻辑报 [E]——此时是真断。
++		if (this.master) {
++			const masterId = this.master.id;
++			const deadline = Date.now() + 9e4;
++			const poll = () => {
++				if (this.disposed || this.master?.id !== masterId) return;
++				if (this.sink.isAvailable(masterId) || Date.now() >= deadline) {
++					this.refreshMasterReachability();
++					return;
++				}
++				const timer = setTimeout(poll, 2e3);
++				timer.unref?.();
++			};
++			const timer = setTimeout(poll, 2e3);
++			timer.unref?.();
++		}
+ 	}
+ 	stop() {
+ 		this.disposed = true;
+@@ -259,10 +278,6 @@
+ 	*/
+ 	async sendToMaster(payload) {
+ 		if (this.disposed || !this.master) return null;
+-		if (!this.refreshMasterReachability()) {
+-			this.logger.debug("[push] master 目标不可达，跳过本次私信通知");
+-			return null;
+-		}
+ 		return this.sendToTarget(this.master.id, payload, { private: true });
+ 	}
+ 	/** Convenience: send a plain-text error message to the master. */
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@bilibili-notify/push",
+-  "version": "2.0.0-alpha.1",
++  "version": "2.0.0-alpha.1-hotfix.1",
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/Akokk0/bilibili-notify"
+@@ -32,4 +32,4 @@
+     "dev": "vp pack --watch",
+     "typecheck": "tsc --noEmit"
+   }
+-}
+\ No newline at end of file
++}

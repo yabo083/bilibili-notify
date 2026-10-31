@@ -1,0 +1,376 @@
+--- a/lib/index.cjs
++++ b/lib/index.cjs
+@@ -267,6 +267,17 @@
+ 				"sec-fetch-site": "same-site"
+ 			}
+ 		}));
++		this.client.interceptors.request.use((config) => {
++			try {
++				const requestUrl = new URL(config.url ?? "", config.baseURL).toString();
++				const cookie = this.jar.getCookieStringSync(requestUrl);
++				if (cookie) {
++					config.headers ??= {};
++					config.headers.Cookie = cookie;
++				}
++			} catch {}
++			return config;
++		});
+ 		this.client.interceptors.response.use((response) => {
+ 			const data = response.data;
+ 			if (data && typeof data.code === "number") this.maybeFireAuthLost(data.code);
+@@ -317,6 +328,196 @@
+ 	addCookie(cookieStr) {
+ 		this.jar.setCookieSync(`${cookieStr}; path=/; domain=.bilibili.com`, "https://www.bilibili.com");
+ 	}
++	addLoginCookiesFromUrl(loginUrl) {
++		if (!loginUrl) return;
++		const jar = this.buildLoginCookieJarFromUrl(loginUrl, false);
++		if (!jar) return;
++		for (const cookie of jar.serializeSync()?.cookies ?? []) {
++			this.jar.setCookieSync(new tough_cookie.Cookie(cookie), `http${cookie.secure ? "s" : ""}://${cookie.domain}${cookie.path}`);
++		}
++	}
++	addLoginCookiesFromSetCookie(setCookieHeaders, tag = "poll") {
++		const loginKeys = new Set([
++			"DedeUserID",
++			"DedeUserID__ckMd5",
++			"SESSDATA",
++			"bili_jct",
++			"sid"
++		]);
++		const imported = [];
++		for (const line of Array.isArray(setCookieHeaders) ? setCookieHeaders : []) {
++			const parsed = tough_cookie.Cookie.parse(String(line));
++			if (!parsed || !loginKeys.has(parsed.key) || !parsed.value) continue;
++			const cookie = new tough_cookie.Cookie({
++				key: parsed.key,
++				value: parsed.value,
++				domain: "bilibili.com",
++				path: "/",
++				secure: true,
++				httpOnly: parsed.httpOnly,
++				expires: parsed.expires,
++				sameSite: parsed.sameSite
++			});
++			this.jar.setCookieSync(cookie, "https://www.bilibili.com/");
++			imported.push(parsed.key);
++		}
++		this.logger.warn(`[login] ${tag} Set-Cookie 导入认证项=${imported.join(",") || "none"}`);
++		return imported;
++	}
++	buildLoginCookieJarFromUrl(loginUrl, decodeValues) {
++		if (!loginUrl) return null;
++		let url;
++		try {
++			url = new URL(loginUrl);
++		} catch {
++			return null;
++		}
++		const rawParams = new Map(url.search.slice(1).split("&").filter(Boolean).map((pair) => {
++			const index = pair.indexOf("=");
++			const rawKey = index >= 0 ? pair.slice(0, index) : pair;
++			const rawValue = index >= 0 ? pair.slice(index + 1) : "";
++			return [decodeURIComponent(rawKey), rawValue];
++		}));
++		const keys = [
++			"DedeUserID",
++			"DedeUserID__ckMd5",
++			"SESSDATA",
++			"bili_jct",
++			"sid"
++		];
++		const jar = new tough_cookie.CookieJar();
++		for (const key of keys) {
++			const rawValue = rawParams.get(key);
++			if (!rawValue) continue;
++			let value = rawValue;
++			if (decodeValues) try {
++				value = decodeURIComponent(rawValue);
++			} catch {}
++			const cookie = new tough_cookie.Cookie({ key, value, domain: "bilibili.com", path: "/", secure: true });
++			jar.setCookieSync(cookie, "https://www.bilibili.com/");
++		}
++		return jar;
++	}
++	buildLoginCookieJarFromJar(source) {
++		const loginKeys = new Set([
++			"DedeUserID",
++			"DedeUserID__ckMd5",
++			"SESSDATA",
++			"bili_jct",
++			"sid"
++		]);
++		const jar = new tough_cookie.CookieJar();
++		let count = 0;
++		for (const sourceCookie of source.serializeSync()?.cookies ?? []) {
++			if (!loginKeys.has(sourceCookie.key) || !sourceCookie.value) continue;
++			const cookie = new tough_cookie.Cookie({
++				...sourceCookie,
++				domain: "bilibili.com",
++				path: "/",
++				secure: true
++			});
++			jar.setCookieSync(cookie, "https://www.bilibili.com/");
++			count++;
++		}
++		return count ? jar : null;
++	}
++	async validateLoginJar(label, jar) {
++		const url = GET_MYSELF_INFO;
++		const cookie = jar.getCookieStringSync(url);
++		const keys = (jar.serializeSync()?.cookies ?? []).map((item) => item.key).join(",") || "none";
++		if (!cookie) {
++			this.logger.warn(`[login] ${label} cookie 验证跳过：无 Cookie，keys=${keys}`);
++			return false;
++		}
++		try {
++			const res = await axios.default.get(url, {
++				timeout: 2e4,
++				headers: {
++					"User-Agent": this.config.userAgent || "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
++					Origin: "https://www.bilibili.com",
++					Referer: "https://www.bilibili.com/",
++					Cookie: cookie
++				}
++			});
++			const code = res.data?.code;
++			this.logger.warn(`[login] ${label} cookie 验证 code=${code} keys=${keys}`);
++			return code === 0;
++		} catch (e) {
++			this.logger.warn(`[login] ${label} cookie 验证异常 keys=${keys}: ${e instanceof Error ? e.message : String(e)}`);
++			return false;
++		}
++	}
++	async completeLoginCookies(loginUrl) {
++		let loginUrlInfo = "missing";
++		let gourl = null;
++		try {
++			if (loginUrl) {
++				const parsed = new URL(loginUrl);
++				const keys = parsed.search.slice(1).split("&").filter(Boolean).map((pair) => decodeURIComponent((pair.split("=", 1)[0] ?? ""))).filter(Boolean).join(",") || "none";
++				loginUrlInfo = `${parsed.origin}${parsed.pathname} keys=${keys}`;
++				gourl = parsed.searchParams.get("gourl");
++			}
++		} catch {
++			loginUrlInfo = "invalid-url";
++		}
++		this.logger.warn(`[login] poll 成功，loginUrl=${loginUrlInfo}`);
++		if (loginUrl) {
++			try {
++				const res = await this.client.get(loginUrl, {
++					maxRedirects: 5,
++					validateStatus: (status) => status >= 200 && status < 400,
++					headers: { Referer: "https://www.bilibili.com/" }
++				});
++				const setCookie = res.headers?.["set-cookie"];
++				const setCookieKeys = Array.isArray(setCookie) ? setCookie.map((line) => String(line).split("=", 1)[0]).join(",") : "none";
++				this.logger.warn(`[login] 登录落地页访问 status=${res.status} setCookieKeys=${setCookieKeys}`);
++			} catch (e) {
++				this.logger.warn(`[login] 访问登录落地页失败: ${e instanceof Error ? e.message : String(e)}`);
++			}
++			if (gourl) try {
++				const res = await this.client.get(gourl, {
++					maxRedirects: 5,
++					validateStatus: (status) => status >= 200 && status < 400,
++					headers: { Referer: loginUrl }
++				});
++				const setCookie = res.headers?.["set-cookie"];
++				const setCookieKeys = Array.isArray(setCookie) ? setCookie.map((line) => String(line).split("=", 1)[0]).join(",") : "none";
++				this.logger.warn(`[login] gourl 访问 status=${res.status} setCookieKeys=${setCookieKeys}`);
++			} catch (e) {
++				this.logger.warn(`[login] 访问 gourl 失败: ${e instanceof Error ? e.message : String(e)}`);
++			}
++		}
++		try {
++			await this.client.get("https://www.bilibili.com/", {
++				maxRedirects: 5,
++				validateStatus: (status) => status >= 200 && status < 500
++			});
++		} catch (e) {
++			this.logger.warn(`[login] 访问 B 站首页补全 cookie 失败: ${e instanceof Error ? e.message : String(e)}`);
++		}
++		if (await this.validateLoginJar("landing", this.jar)) return;
++		const normalizedJar = this.buildLoginCookieJarFromJar(this.jar);
++		if (normalizedJar && await this.validateLoginJar("landing-normalized", normalizedJar)) {
++			this.jar = normalizedJar;
++			await this.initClient();
++			return;
++		}
++		const rawJar = this.buildLoginCookieJarFromUrl(loginUrl, false);
++		if (rawJar && await this.validateLoginJar("url-raw", rawJar)) {
++			this.jar = rawJar;
++			await this.initClient();
++			return;
++		}
++		const decodedJar = this.buildLoginCookieJarFromUrl(loginUrl, true);
++		if (decodedJar && await this.validateLoginJar("url-decoded", decodedJar)) {
++			this.jar = decodedJar;
++			await this.initClient();
++			return;
++		}
++		this.logger.warn("[login] 登录成功但所有 cookie 候选均未通过账号接口验证，清空 jar 以避免保存无效登录态");
++		this.jar = new tough_cookie.CookieJar();
++		await this.initClient();
++	}
+ 	getCookiesJson() {
+ 		try {
+ 			return JSON.stringify(this.jar.serializeSync()?.cookies ?? []);
+@@ -362,17 +563,6 @@
+ 				sameSite: cd.sameSite
+ 			});
+ 			this.jar.setCookieSync(cookie, `http${cookie.secure ? "s" : ""}://${cookie.domain}${cookie.path}`);
+-		}
+-		if (biliJctCookie) {
+-			const buvid3 = new tough_cookie.Cookie({
+-				key: "buvid3",
+-				value: "some_non_empty_value",
+-				expires: this.parseExpires(biliJctCookie.expires),
+-				domain: biliJctCookie.domain,
+-				path: biliJctCookie.path,
+-				secure: biliJctCookie.secure
+-			});
+-			this.jar.setCookieSync(buvid3, `http${buvid3.secure ? "s" : ""}://${buvid3.domain}${buvid3.path}`);
+ 		}
+ 		this.loginInfoLoaded = true;
+ 		this.logger.debug(`[cookie] Cookie 写入完成，bili_jct=${biliJctCookie ? "存在" : "缺失"}`);
+@@ -471,12 +661,13 @@
+ 		const { document } = new jsdom.JSDOM(html).window;
+ 		const refreshCsrf = document.getElementById("1-name")?.textContent?.trim() || null;
+ 		if (!refreshCsrf) throw new Error("correspond 页面未解析到 refresh_csrf,跳过本轮刷新");
+-		const { data: refreshData } = await this.client.post(COOKIE_REFRESH_URL, {
++		const refreshRes = await this.client.post(COOKIE_REFRESH_URL, {
+ 			csrf,
+ 			refresh_csrf: refreshCsrf,
+ 			source: "main_web",
+ 			refresh_token: refreshToken
+ 		}, { headers: { "Content-Type": "application/x-www-form-urlencoded" } });
++		const refreshData = refreshRes.data;
+ 		if (gen !== this.refreshGeneration) {
+ 			this.logger.debug("[cookie] 刷新结果在网络往返期间被取代,丢弃");
+ 			return;
+@@ -489,6 +680,14 @@
+ 			await this.terminateSession(`[cookie] 刷新失败(会话终态)code=${refreshData.code} msg=${refreshData.message},触发 auth-lost`);
+ 			throw new Error(`Cookie 刷新失败: code=${refreshData.code}, message=${refreshData.message}`);
+ 		}
++		// hotfix.15: jar 抓不到响应 Set-Cookie(http-cookie-agent@6 与 tough-cookie@6 不兼容,
++		// 此前刷新后 jar 仍是旧 Cookie,confirm 作废旧会话后即 auth-lost —— 每 ~3 天掉登录的根因)。
++		// 必须手工导入刷新响应的认证 Cookie;拿不到就中止 confirm,保住旧会话等下轮重试。
++		const importedKeys = this.addLoginCookiesFromSetCookie(refreshRes.headers?.["set-cookie"], "cookie/refresh");
++		if (!importedKeys.includes("SESSDATA") || !importedKeys.includes("bili_jct")) {
++			this.logger.error("[cookie] cookie/refresh 响应未携带认证 Set-Cookie,跳过 confirm(不使旧会话失效),下轮重试");
++			throw new Error("Cookie 刷新响应缺少认证 Set-Cookie,已跳过 confirm");
++		}
+ 		const newCsrf = this.getCSRF();
+ 		if (!newCsrf) throw new Error("未找到 bili_jct cookie");
+ 		const { data: acceptData } = await this.client.post(COOKIE_REFRESH_CONFIRM_URL, {
+@@ -507,7 +706,16 @@
+ 			this.logger.debug("[cookie] 刷新完成但已被取代,不回写持久化");
+ 			return;
+ 		}
++		// hotfix.15: 持久化前用账号接口验证新 Cookie 真实生效,避免把坏会话写盘。
+ 		try {
++			const verify = await this.getCookieInfo(this.getCSRF() ?? csrf);
++			const verifyCode = typeof verify?.code === "number" ? verify.code : 0;
++			if (verifyCode === 0) this.logger.info("[cookie] 刷新后验证通过(code=0),新 Cookie 已生效");
++			else this.logger.error(`[cookie] 刷新后验证异常 code=${verifyCode},新 Cookie 可能未生效,请关注 auth-lost`);
++		} catch (e) {
++			this.logger.warn(`[cookie] 刷新后验证探测失败(不影响保存): ${e.message}`);
++		}
++		try {
+ 			await this.callbacks.onCookiesRefreshed?.({
+ 				cookiesJson: this.getCookiesJson() ?? "[]",
+ 				refreshToken: refreshData.data.refresh_token
+@@ -588,18 +796,38 @@
+ 		return this.retry(async () => (await this.client.get(`${HAS_NEW_DYNAMIC}?update_baseline=${encodeURIComponent(updateBaseline)}`)).data, "hasNewDynamic");
+ 	}
+ 	async getLoginQRCode() {
+-		return this.retry(async () => (await this.client.get(GET_LOGIN_QRCODE)).data, "getLoginQRCode");
++		return this.retry(async () => (await this.client.get(`${GET_LOGIN_QRCODE}?source=main-fe-header`)).data, "getLoginQRCode");
+ 	}
+ 	async getLoginStatus(qrcodeKey) {
+-		return this.retry(async () => (await this.client.get(`${GET_LOGIN_STATUS}?qrcode_key=${encodeURIComponent(qrcodeKey)}`)).data, "getLoginStatus");
++		return this.retry(async () => {
++			const response = await this.client.get(`${GET_LOGIN_STATUS}?qrcode_key=${encodeURIComponent(qrcodeKey)}&source=main-fe-header`);
++			const { data } = response;
++			if (data?.data?.code === 0) {
++				this.addLoginCookiesFromSetCookie(response.headers?.["set-cookie"]);
++				await this.completeLoginCookies(data.data.url);
++			}
++			return data;
++		}, "getLoginStatus");
+ 	}
+ 	async getMyselfInfo() {
+ 		return this.retry(async () => (await this.client.get(GET_MYSELF_INFO)).data, "getMyselfInfo");
+ 	}
++	async getMyselfInfoCached() {
++		return this.getMyselfInfo();
++	}
+ 	async getUserCardInfo(mid, withPhoto = false) {
+ 		return this.retry(async () => {
+ 			const url = `${GET_USER_CARD_INFO}?mid=${encodeURIComponent(mid)}${withPhoto ? "&photo=true" : ""}`;
+-			return (await this.client.get(url)).data;
++			const cookie = this.jar.getCookieStringSync(url);
++			return (await axios.default.get(url, {
++				timeout: 2e4,
++				headers: {
++					"User-Agent": this.config.userAgent || "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
++					Origin: "https://www.bilibili.com",
++					Referer: "https://www.bilibili.com/",
++					Cookie: cookie
++				}
++			})).data;
+ 		}, "getUserCardInfo");
+ 	}
+ 	async getUserInfo(mid, griskId) {
+@@ -620,7 +848,7 @@
+ 		return this.retry(async () => (await this.client.get(`${GET_MASTER_INFO}?uid=${encodeURIComponent(uid)}`)).data, "getMasterInfo");
+ 	}
+ 	async getLiveRoomInfoStreamKey(roomId) {
+-		return this.retry(async () => (await this.client.get(`${GET_LIVE_ROOM_INFO_STREAM_KEY}?id=${encodeURIComponent(roomId)}`)).data, "getLiveRoomInfoStreamKey");
++		return this.retry(async () => this.wbiGet(GET_LIVE_ROOM_INFO_STREAM_KEY, { id: roomId }), "getLiveRoomInfoStreamKey");
+ 	}
+ 	async getLiveRoomInfoByUids(uids) {
+ 		if (!uids.length) return {
+--- a/lib/index.d.cts
++++ b/lib/index.d.cts
+@@ -248,6 +248,8 @@
+    */
+   private terminateSession;
+   addCookie(cookieStr: string): void;
++  private addLoginCookiesFromUrl;
++  private completeLoginCookies;
+   getCookiesJson(): string | undefined;
+   getCookiesHeader(): string;
+   private getCSRF;
+@@ -289,6 +291,7 @@
+   getLoginQRCode(): Promise<any>;
+   getLoginStatus(qrcodeKey: string): Promise<any>;
+   getMyselfInfo(): Promise<MySelfInfoData>;
++  getMyselfInfoCached(): Promise<MySelfInfoData>;
+   getUserCardInfo(mid: string, withPhoto?: boolean): Promise<UserCardInfoData>;
+   getUserInfo(mid: string, griskId?: string): Promise<any>;
+   getLiveRoomInfo(roomId: string): Promise<LiveRoomInfo>;
+@@ -419,4 +422,4 @@
+ /** Re-exported constant for adapter-side rate limiting; matches the legacy core debounce. */
+ declare const LOGIN_FLOW_AUTH_LOST_NOTIFY_DEBOUNCE_MS = 60000;
+ //#endregion
+-export { BACookie, BiliDataServer, BiliLoginStatus, BiliTicket, BilibiliAPI, type BilibiliAPIConfig, CreateGroup, GroupList, LOGIN_FLOW_AUTH_LOST_NOTIFY_DEBOUNCE_MS, LiveRoomInfo, LoginFlow, type LoginFlowOptions, type LoginPollResult, type LoginSnapshot, type LoginStatusMsgKey, MasterInfoData, MySelfInfoData, Result, UserCard, UserCardInfo, UserCardInfoData, UserCardSpace, V_VoucherCaptchaData, ValidateCaptchaData };
+\ No newline at end of file
++export { BACookie, BiliDataServer, BiliLoginStatus, BiliTicket, BilibiliAPI, type BilibiliAPIConfig, CreateGroup, GroupList, LOGIN_FLOW_AUTH_LOST_NOTIFY_DEBOUNCE_MS, LiveRoomInfo, LoginFlow, type LoginFlowOptions, type LoginPollResult, type LoginSnapshot, type LoginStatusMsgKey, MasterInfoData, MySelfInfoData, Result, UserCard, UserCardInfo, UserCardInfoData, UserCardSpace, V_VoucherCaptchaData, ValidateCaptchaData };
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@bilibili-notify/api",
+-  "version": "0.2.0-alpha.2",
++  "version": "0.2.0-alpha.2-hotfix.15",
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/Akokk0/bilibili-notify"
+@@ -48,4 +48,4 @@
+     "dev": "vp pack --watch",
+     "typecheck": "tsc --noEmit"
+   }
+-}
+\ No newline at end of file
++}

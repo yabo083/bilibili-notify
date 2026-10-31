@@ -1,0 +1,327 @@
+--- a/lib/index.cjs
++++ b/lib/index.cjs
+@@ -312,6 +312,54 @@
+ 		await internals.push.sendPrivateMsg("测试消息");
+ 		await session?.send("已发送测试消息。如果未收到，可能是机器人不支持发送私聊消息或配置信息有误");
+ 	});
++	biliCom.subcommand(".login", "通过私聊二维码登录 Bilibili").alias("B站登录").usage("仅限已配置的主人账号在机器人私聊中使用").example("bili login").action(async ({ session }) => {
++		const denied = this.validateQrLoginSession(session);
++		if (denied) return denied;
++		const sendFeedback = (message) => {
++			if (!session) return;
++			session.send(message).catch((e) => {
++				this.ctx.logger("bilibili-notify").warn(`[login] 私聊登录结果通知发送失败: ${String(e)}`);
++			});
++		};
++		let scanConfirmed = false;
++		let finished = false;
++		const release = this.ctx.on("bilibili-notify/login-status-report", (snapshot) => {
++			if (finished) return;
++			if (snapshot.status === _bilibili_notify_api.BiliLoginStatus.LOGGING_QR) {
++				if (scanConfirmed || !snapshot.msg.includes("确认")) return;
++				scanConfirmed = true;
++				sendFeedback("已检测到扫码，请在 Bilibili App 中确认登录。");
++				return;
++			}
++			if (snapshot.status === _bilibili_notify_api.BiliLoginStatus.LOGGED_IN) {
++				finished = true;
++				release();
++				sendFeedback("Bilibili 登录成功，Cookie 已自动保存并启用续期。");
++				return;
++			}
++			if (snapshot.status === _bilibili_notify_api.BiliLoginStatus.LOGIN_FAILED) {
++				finished = true;
++				release();
++				sendFeedback(`Bilibili 登录失败：${snapshot.msg || "请重新执行 bili login"}`);
++			}
++		});
++		try {
++			const snapshot = await this.beginQrLogin();
++			const match = typeof snapshot.data === "string" ? /^data:(image\/[\w.+-]+);base64,(.+)$/.exec(snapshot.data) : null;
++			if (!match) {
++				finished = true;
++				release();
++				return `二维码生成失败：${snapshot.msg || "请稍后重试"}`;
++			}
++			await session?.send(koishi.h.image(Buffer.from(match[2], "base64"), match[1]));
++			return "登录二维码已发送，请在 3 分钟内使用 Bilibili App 扫码并确认。";
++		} catch (e) {
++			finished = true;
++			release();
++			this.ctx.logger("bilibili-notify").warn(`[login] 私聊扫码登录启动失败: ${String(e)}`);
++			return "启动扫码登录失败，请稍后重试。";
++		}
++	});
+ 	biliCom.subcommand(".ll", "展示当前正在直播的订阅对象").usage("展示当前正在直播的订阅对象").example("bili ll").action(async () => {
+ 		const internals = this.getInternals(_bilibili_notify_internal.BILIBILI_NOTIFY_TOKEN);
+ 		if (!internals) return "插件尚未就绪";
+@@ -474,17 +522,7 @@
+ 	install() {
+ 		const { ctx } = this.opts;
+ 		ctx.console.addListener("bilibili-notify/start-login", async () => {
+-			if (this.startLoginInFlight) {
+-				this.opts.logger.debug("[login] 已有登录流程在进行,忽略重复触发");
+-				return;
+-			}
+-			this.startLoginInFlight = true;
+-			this.opts.logger.info("[login] 触发登录事件");
+-			try {
+-				await this.flow.beginLogin();
+-			} finally {
+-				this.startLoginInFlight = false;
+-			}
++			await this.beginLogin();
+ 		});
+ 		ctx.console.addListener("bilibili-notify/reset-key", async () => {
+ 			if (this.resetKeyInFlight) {
+@@ -524,6 +562,20 @@
+ 			return `data:image/png;base64,${Buffer.from(buffer).toString("base64")}`;
+ 		});
+ 	}
++	async beginLogin() {
++		if (this.startLoginInFlight) {
++			this.opts.logger.debug("[login] 已有登录流程在进行,忽略重复触发");
++			return false;
++		}
++		this.startLoginInFlight = true;
++		this.opts.logger.info("[login] 触发登录事件");
++		try {
++			await this.flow.beginLogin();
++			return true;
++		} finally {
++			this.startLoginInFlight = false;
++		}
++	}
+ 	stop() {
+ 		this.flow.stop();
+ 	}
+@@ -1246,6 +1298,19 @@
+ 		if (!this.loginBridge) throw new Error("login bridge not initialized");
+ 		return this.loginBridge.flow.current();
+ 	}
++	validateQrLoginSession(session) {
++		if (!session?.isDirect) return "为了保护登录信息，请在机器人私聊中使用此命令。";
++		const master = this.config.master;
++		if (!master?.enable || !master.masterAccount) return "请先在插件配置中启用并填写主人账号。";
++		if (String(session.userId) !== String(master.masterAccount).trim()) return "仅配置的主人账号可以使用登录命令。";
++		const platform = master.platform?.trim();
++		if (platform && session.platform !== platform) return "当前机器人平台与主人账号配置不一致。";
++	}
++	async beginQrLogin() {
++		if (!this.loginBridge) throw new Error("登录模块尚未就绪");
++		await this.loginBridge.beginLogin();
++		return this.loginBridge.flow.current();
++	}
+ 	subList() {
+ 		const subs = this.slots.store?.list() ?? [];
+ 		if (!subs.length) return "没有订阅任何UP";
+@@ -1413,6 +1478,10 @@
+ 		});
+ 	}
+ 	async get() {
++		const service = this.ctx.get?.("bilibili-notify");
++		if (service && service !== this && typeof service.getAuthSnapshot === "function") try {
++			this.biliData = service.getAuthSnapshot();
++		} catch {}
+ 		return this.biliData;
+ 	}
+ };
+--- a/lib/index.d.cts
++++ b/lib/index.d.cts
+@@ -2,7 +2,7 @@
+ import { BiliDataServer, BilibiliAPI } from "@bilibili-notify/api";
+ import { PushAdapter, PushTarget, Subscription, SubscriptionOp, SubscriptionOp as SubscriptionOp$1 } from "@bilibili-notify/internal";
+ import { CookieData, StorageManager } from "@bilibili-notify/storage";
+-import { Awaitable, Context, Schema, Service } from "koishi";
++import { Awaitable, Context, Schema, Service, Session } from "koishi";
+ import { FlatSubConfigItem, SubscriptionStore } from "@bilibili-notify/subscription";
+ import { BilibiliPush } from "@bilibili-notify/push";
+ import { DataService } from "@koishijs/plugin-console";
+@@ -97,6 +97,8 @@
+   private get loginBridge();
+   get store(): SubscriptionStore | null;
+   getAuthSnapshot(): _$_bilibili_notify_api0.BiliDataServer;
++  validateQrLoginSession(session?: Session): string | undefined;
++  beginQrLogin(): Promise<_$_bilibili_notify_api0.BiliDataServer>;
+   subList(): string;
+   protected start(): Promise<void>;
+   protected stop(): Awaitable<void>;
+@@ -174,4 +176,4 @@
+ declare function apply(ctx: Context, config: BilibiliNotifyConfig): void;
+ declare const Config: Schema<BilibiliNotifyConfig>;
+ //#endregion
+-export { type BilibiliNotifyConfig, BilibiliNotifyConfigSchema, Config, type SubscriptionOp as LegacySubscriptionOp, type SubscriptionOp$1 as SubscriptionOp, apply, inject, name, usage };
+\ No newline at end of file
++export { type BilibiliNotifyConfig, BilibiliNotifyConfigSchema, Config, type SubscriptionOp as LegacySubscriptionOp, type SubscriptionOp$1 as SubscriptionOp, apply, inject, name, usage };
+--- a/lib/index.d.mts
++++ b/lib/index.d.mts
+@@ -1,6 +1,6 @@
+ import { DataService } from "@koishijs/plugin-console";
+ import { CookieData, StorageManager } from "@bilibili-notify/storage";
+-import { Awaitable, Context, Schema, Service } from "koishi";
++import { Awaitable, Context, Schema, Service, Session } from "koishi";
+ import { PushAdapter, PushTarget, Subscription, SubscriptionOp, SubscriptionOp as SubscriptionOp$1 } from "@bilibili-notify/internal";
+ import * as _$_bilibili_notify_api0 from "@bilibili-notify/api";
+ import { BiliDataServer, BilibiliAPI, LoginFlow } from "@bilibili-notify/api";
+@@ -97,6 +97,8 @@
+   private get loginBridge();
+   get store(): SubscriptionStore | null;
+   getAuthSnapshot(): _$_bilibili_notify_api0.BiliDataServer;
++  validateQrLoginSession(session?: Session): string | undefined;
++  beginQrLogin(): Promise<_$_bilibili_notify_api0.BiliDataServer>;
+   subList(): string;
+   protected start(): Promise<void>;
+   protected stop(): Awaitable<void>;
+@@ -174,4 +176,4 @@
+ declare function apply(ctx: Context, config: BilibiliNotifyConfig): void;
+ declare const Config: Schema<BilibiliNotifyConfig>;
+ //#endregion
+-export { type BilibiliNotifyConfig, BilibiliNotifyConfigSchema, Config, type SubscriptionOp as LegacySubscriptionOp, type SubscriptionOp$1 as SubscriptionOp, apply, inject, name, usage };
+\ No newline at end of file
++export { type BilibiliNotifyConfig, BilibiliNotifyConfigSchema, Config, type SubscriptionOp as LegacySubscriptionOp, type SubscriptionOp$1 as SubscriptionOp, apply, inject, name, usage };
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -312,6 +312,54 @@
+ 		await internals.push.sendPrivateMsg("测试消息");
+ 		await session?.send("已发送测试消息。如果未收到，可能是机器人不支持发送私聊消息或配置信息有误");
+ 	});
++	biliCom.subcommand(".login", "通过私聊二维码登录 Bilibili").alias("B站登录").usage("仅限已配置的主人账号在机器人私聊中使用").example("bili login").action(async ({ session }) => {
++		const denied = this.validateQrLoginSession(session);
++		if (denied) return denied;
++		const sendFeedback = (message) => {
++			if (!session) return;
++			session.send(message).catch((e) => {
++				this.ctx.logger("bilibili-notify").warn(`[login] 私聊登录结果通知发送失败: ${String(e)}`);
++			});
++		};
++		let scanConfirmed = false;
++		let finished = false;
++		const release = this.ctx.on("bilibili-notify/login-status-report", (snapshot) => {
++			if (finished) return;
++			if (snapshot.status === BiliLoginStatus.LOGGING_QR) {
++				if (scanConfirmed || !snapshot.msg.includes("确认")) return;
++				scanConfirmed = true;
++				sendFeedback("已检测到扫码，请在 Bilibili App 中确认登录。");
++				return;
++			}
++			if (snapshot.status === BiliLoginStatus.LOGGED_IN) {
++				finished = true;
++				release();
++				sendFeedback("Bilibili 登录成功，Cookie 已自动保存并启用续期。");
++				return;
++			}
++			if (snapshot.status === BiliLoginStatus.LOGIN_FAILED) {
++				finished = true;
++				release();
++				sendFeedback(`Bilibili 登录失败：${snapshot.msg || "请重新执行 bili login"}`);
++			}
++		});
++		try {
++			const snapshot = await this.beginQrLogin();
++			const match = typeof snapshot.data === "string" ? /^data:(image\/[\w.+-]+);base64,(.+)$/.exec(snapshot.data) : null;
++			if (!match) {
++				finished = true;
++				release();
++				return `二维码生成失败：${snapshot.msg || "请稍后重试"}`;
++			}
++			await session?.send(h.image(Buffer.from(match[2], "base64"), match[1]));
++			return "登录二维码已发送，请在 3 分钟内使用 Bilibili App 扫码并确认。";
++		} catch (e) {
++			finished = true;
++			release();
++			this.ctx.logger("bilibili-notify").warn(`[login] 私聊扫码登录启动失败: ${String(e)}`);
++			return "启动扫码登录失败，请稍后重试。";
++		}
++	});
+ 	biliCom.subcommand(".ll", "展示当前正在直播的订阅对象").usage("展示当前正在直播的订阅对象").example("bili ll").action(async () => {
+ 		const internals = this.getInternals(BILIBILI_NOTIFY_TOKEN);
+ 		if (!internals) return "插件尚未就绪";
+@@ -474,17 +522,7 @@
+ 	install() {
+ 		const { ctx } = this.opts;
+ 		ctx.console.addListener("bilibili-notify/start-login", async () => {
+-			if (this.startLoginInFlight) {
+-				this.opts.logger.debug("[login] 已有登录流程在进行,忽略重复触发");
+-				return;
+-			}
+-			this.startLoginInFlight = true;
+-			this.opts.logger.info("[login] 触发登录事件");
+-			try {
+-				await this.flow.beginLogin();
+-			} finally {
+-				this.startLoginInFlight = false;
+-			}
++			await this.beginLogin();
+ 		});
+ 		ctx.console.addListener("bilibili-notify/reset-key", async () => {
+ 			if (this.resetKeyInFlight) {
+@@ -524,6 +562,20 @@
+ 			return `data:image/png;base64,${Buffer.from(buffer).toString("base64")}`;
+ 		});
+ 	}
++	async beginLogin() {
++		if (this.startLoginInFlight) {
++			this.opts.logger.debug("[login] 已有登录流程在进行,忽略重复触发");
++			return false;
++		}
++		this.startLoginInFlight = true;
++		this.opts.logger.info("[login] 触发登录事件");
++		try {
++			await this.flow.beginLogin();
++			return true;
++		} finally {
++			this.startLoginInFlight = false;
++		}
++	}
+ 	stop() {
+ 		this.flow.stop();
+ 	}
+@@ -1246,6 +1298,19 @@
+ 		if (!this.loginBridge) throw new Error("login bridge not initialized");
+ 		return this.loginBridge.flow.current();
+ 	}
++	validateQrLoginSession(session) {
++		if (!session?.isDirect) return "为了保护登录信息，请在机器人私聊中使用此命令。";
++		const master = this.config.master;
++		if (!master?.enable || !master.masterAccount) return "请先在插件配置中启用并填写主人账号。";
++		if (String(session.userId) !== String(master.masterAccount).trim()) return "仅配置的主人账号可以使用登录命令。";
++		const platform = master.platform?.trim();
++		if (platform && session.platform !== platform) return "当前机器人平台与主人账号配置不一致。";
++	}
++	async beginQrLogin() {
++		if (!this.loginBridge) throw new Error("登录模块尚未就绪");
++		await this.loginBridge.beginLogin();
++		return this.loginBridge.flow.current();
++	}
+ 	subList() {
+ 		const subs = this.slots.store?.list() ?? [];
+ 		if (!subs.length) return "没有订阅任何UP";
+@@ -1413,6 +1478,10 @@
+ 		});
+ 	}
+ 	async get() {
++		const service = this.ctx.get?.("bilibili-notify");
++		if (service && service !== this && typeof service.getAuthSnapshot === "function") try {
++			this.biliData = service.getAuthSnapshot();
++		} catch {}
+ 		return this.biliData;
+ 	}
+ };
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "koishi-plugin-bilibili-notify",
+   "description": "Bilibili 动态推送、直播通知 Koishi 插件",
+-  "version": "5.0.0-alpha.5",
++  "version": "5.0.0-alpha.5-hotfix.2",
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/Akokk0/bilibili-notify"
+@@ -82,4 +82,4 @@
+     "build:client": "yakumo build",
+     "typecheck": "tsc --noEmit"
+   }
+-}
+\ No newline at end of file
++}

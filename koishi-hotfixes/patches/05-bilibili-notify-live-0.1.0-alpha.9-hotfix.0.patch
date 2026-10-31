@@ -1,0 +1,73 @@
+--- a/lib/index.cjs
++++ b/lib/index.cjs
+@@ -391,7 +391,10 @@
+ 			return false;
+ 		}
+ 		const fallbackReason = describeLiveRoomDanmuPreflightFallback(danmuInfo);
+-		if (fallbackReason) this.logger.warn(`[conn] 直播间 [${roomId}] 弹幕连接预检被风控拦截：${fallbackReason}，回退到直接建连`);
++		if (fallbackReason) {
++			this.logger.warn(`[conn] 直播间 [${roomId}] 弹幕连接预检被风控拦截：${fallbackReason}，稍后重试`);
++			return false;
++		}
+ 		const deniedReason = describeLiveRoomDanmuAccessDenied(danmuInfo);
+ 		if (deniedReason) throw new LiveRoomAccessDeniedError(deniedReason);
+ 		if (aborted()) return false;
+@@ -411,9 +414,12 @@
+ 			return false;
+ 		}
+ 		if (aborted()) return false;
++		const host = danmuInfo.data.host_list[0];
+ 		const listener = (0, blive_message_listener.startListen)(roomIdNum, handler, { ws: {
+ 			headers: { Cookie: cookiesStr },
+-			uid: mySelfInfo.data.mid
++			uid: mySelfInfo.data.mid,
++			key: danmuInfo.data.token,
++			url: { host: host.host, port: host.port }
+ 		} });
+ 		if (aborted()) {
+ 			listener.close();
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -367,7 +367,10 @@
+ 			return false;
+ 		}
+ 		const fallbackReason = describeLiveRoomDanmuPreflightFallback(danmuInfo);
+-		if (fallbackReason) this.logger.warn(`[conn] 直播间 [${roomId}] 弹幕连接预检被风控拦截：${fallbackReason}，回退到直接建连`);
++		if (fallbackReason) {
++			this.logger.warn(`[conn] 直播间 [${roomId}] 弹幕连接预检被风控拦截：${fallbackReason}，稍后重试`);
++			return false;
++		}
+ 		const deniedReason = describeLiveRoomDanmuAccessDenied(danmuInfo);
+ 		if (deniedReason) throw new LiveRoomAccessDeniedError(deniedReason);
+ 		if (aborted()) return false;
+@@ -387,9 +390,12 @@
+ 			return false;
+ 		}
+ 		if (aborted()) return false;
++		const host = danmuInfo.data.host_list[0];
+ 		const listener = startListen(roomIdNum, handler, { ws: {
+ 			headers: { Cookie: cookiesStr },
+-			uid: mySelfInfo.data.mid
++			uid: mySelfInfo.data.mid,
++			key: danmuInfo.data.token,
++			url: { host: host.host, port: host.port }
+ 		} });
+ 		if (aborted()) {
+ 			listener.close();
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@bilibili-notify/live",
+-  "version": "0.1.0-alpha.9",
++  "version": "0.1.0-alpha.9-hotfix.0",
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/Akokk0/bilibili-notify"
+@@ -47,4 +47,4 @@
+     "dev": "vp pack --watch",
+     "typecheck": "tsc --noEmit"
+   }
+-}
+\ No newline at end of file
++}
