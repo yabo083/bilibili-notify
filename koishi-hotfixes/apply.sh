@@ -19,7 +19,7 @@ ENTRIES=(
   "01|koishi-plugin-bilibili-notify|5.0.0-alpha.5|patches/01-koishi-plugin-bilibili-notify-5.0.0-alpha.5-hotfix.2.patch"
   "02|@bilibili-notify/api|0.2.0-alpha.2|patches/02-bilibili-notify-api-0.2.0-alpha.2-hotfix.15.patch"
   "03|@bilibili-notify/push|2.0.0-alpha.1|patches/03-bilibili-notify-push-2.0.0-alpha.1-hotfix.1.patch"
-  "04|@bilibili-notify/image|0.0.1-alpha.2|patches/04-bilibili-notify-image-0.0.1-alpha.2-hotfix.1.patch"
+  "04|@bilibili-notify/image|0.0.1-alpha.2|patches/04-bilibili-notify-image-0.0.1-alpha.2-hotfix.2.patch"
   "05|@bilibili-notify/live|0.1.0-alpha.9|patches/05-bilibili-notify-live-0.1.0-alpha.9-hotfix.0.patch"
 )
 

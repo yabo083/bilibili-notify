@@ -1,0 +1,403 @@
+--- a/lib/index.cjs
++++ b/lib/index.cjs
+@@ -7,6 +7,8 @@
+ let vue_jsx_runtime = require("vue/jsx-runtime");
+ let node_fs = require("node:fs");
+ let node_path = require("node:path");
++let undici = require("undici");
++const IPV4_FETCH_DISPATCHER = new undici.Agent({ connect: { family: 4 } });
+ //#region src/render.ts
+ let unoPromise = null;
+ function getUno() {
+@@ -322,13 +324,14 @@
+ //#region src/templates/dynamic-card.tsx
+ function DynamicCard(p) {
+ 	return /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", {
+-		class: "h-auto p-[15px]",
++		class: "h-auto p-[15px] bn-glass",
+ 		style: {
+ 			background: `linear-gradient(to right bottom, ${p.cardColorStart}, ${p.cardColorEnd})`,
+-			minWidth: "380px"
++			minWidth: "380px",
++			"--bn-bg": p.bgImage ? ("url(\"" + p.bgImage + "\")") : "none"
+ 		},
+ 		children: /* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+-			class: "w-full overflow-hidden rounded-[12px]",
++			class: "w-full overflow-hidden rounded-[12px] bn-panel",
+ 			style: "background: rgba(255,255,255,0.82); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,0.12);",
+ 			children: [
+ 				/* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+@@ -341,11 +344,11 @@
+ 						class: "flex flex-col gap-[3px]",
+ 						children: [/* @__PURE__ */ (0, vue_jsx_runtime.jsx)("span", {
+ 							class: "text-[17px] font-bold leading-none",
+-							style: { color: p.upIsVip ? "#FB7299" : "#18191C" },
++							style: { color: p.upIsVip ? "var(--bn-vip)" : "var(--bn-ink)" },
+ 							children: p.upName
+ 						}), /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("span", {
+ 							class: "text-[12px]",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: p.pubTime
+ 						})]
+ 					})]
+@@ -355,14 +358,14 @@
+ 					class: "px-[16px] py-[12px] flex flex-col gap-[10px]",
+ 					children: [p.topic && /* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+ 						class: "flex items-center gap-[5px] text-[13px] font-bold",
+-						style: "color: #00AEEC;",
++						style: "color: var(--bn-accent);",
+ 						children: [SVG_TOPIC, p.topic]
+ 					}), /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", { children: p.mainContent })]
+ 				}),
+ 				/* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", { style: "height: 1px; background: rgba(0,0,0,0.06); margin: 0 16px;" }),
+ 				/* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+ 					class: "flex justify-around px-[16px] py-[12px]",
+-					style: "color: #999;",
++					style: "color: var(--bn-ink-4);",
+ 					children: [
+ 						/* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+ 							class: "flex items-center gap-[6px] text-[13px]",
+@@ -653,12 +656,12 @@
+ 				alt: "avatar"
+ 			}), /* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("span", {
+ 				class: "text-[13px] font-bold",
+-				style: "color: #00AEEC;",
++				style: "color: var(--bn-accent);",
+ 				children: [username, label]
+ 			})]
+ 		}), /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", {
+ 			class: "text-[13px]",
+-			style: "color: #444;",
++			style: "color: var(--bn-ink-2);",
+ 			children: content
+ 		})]
+ 	});
+@@ -972,10 +975,10 @@
+ 	const follower = p.hideFollower ? "" : followerText();
+ 	const description = htmlToPlain(p.data.description);
+ 	return /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", {
+-		class: "h-auto p-3.75",
+-		style: { background: `linear-gradient(to right bottom, ${p.cardColorStart}, ${p.cardColorEnd})` },
++		class: "h-auto p-3.75 bn-glass",
++		style: { background: `linear-gradient(to right bottom, ${p.cardColorStart}, ${p.cardColorEnd})`, "--bn-bg": (p.cover ? p.data.user_cover : p.data.keyframe) ? ("url(\"" + (p.cover ? p.data.user_cover : p.data.keyframe) + "\")") : "none" },
+ 		children: /* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+-			class: "overflow-hidden rounded-xl",
++			class: "overflow-hidden rounded-xl bn-panel",
+ 			style: "background: rgba(255,255,255,0.82); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 360px;",
+ 			children: [
+ 				/* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", {
+@@ -1012,7 +1015,7 @@
+ 							children: p.username
+ 						}), /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("span", {
+ 							class: "text-[12px]",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: p.liveTime
+ 						})]
+ 					})]
+@@ -1028,17 +1031,17 @@
+ 					children: [
+ 						/* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("div", {
+ 							class: "flex justify-between text-[13px]",
+-							style: "color: #666;",
++							style: "color: var(--bn-ink-3);",
+ 							children: [/* @__PURE__ */ (0, vue_jsx_runtime.jsx)("span", { children: statsLeft() }), /* @__PURE__ */ (0, vue_jsx_runtime.jsxs)("span", { children: ["分区：", p.data.area_name] })]
+ 						}),
+ 						follower && /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", {
+ 							class: "text-[13px]",
+-							style: "color: #666;",
++							style: "color: var(--bn-ink-3);",
+ 							children: follower
+ 						}),
+ 						!p.hideDesc && /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("div", {
+ 							class: "text-[13px] leading-normal",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: description || "这个主播很懒，什么简介都没写"
+ 						})
+ 					]
+@@ -1143,7 +1146,7 @@
+ 							children: p.masterName
+ 						}), /* @__PURE__ */ (0, vue_jsx_runtime.jsx)("span", {
+ 							class: "text-[12px]",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: "本场直播弹幕词云"
+ 						})]
+ 					})]
+@@ -1248,6 +1251,19 @@
+ 	}
+ 	throw lastError;
+ }
++const BN_LIGHT_CSS = ".bn-glass{position:relative;overflow:hidden;isolation:isolate}.bn-glass::before{content:'';position:absolute;inset:-14%;z-index:0;background-image:var(--bn-bg,none);background-size:cover;background-position:center;filter:blur(26px) saturate(1.35)}.bn-glass::after{content:'';position:absolute;inset:0;z-index:0;background:var(--bn-veil)}.bn-glass>*{position:relative;z-index:1}.bn-glass .bn-panel{background:var(--bn-panel)!important;backdrop-filter:blur(12px) saturate(1.5);-webkit-backdrop-filter:blur(12px) saturate(1.5);box-shadow:var(--bn-bezel)!important}.bn-glass{--bn-ink:#18191C;--bn-ink-2:#444;--bn-ink-3:#666;--bn-ink-4:#999;--bn-accent:#00AEEC;--bn-vip:#FB7299;--bn-panel:rgba(255,255,255,.74);--bn-veil:rgba(255,255,255,.45);--bn-bezel:inset 0 .5px 0 rgba(255,255,255,.85),inset 0 0 0 .5px rgba(255,255,255,.35),inset 0 -1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.12)}";
++const BN_DARK_CSS = ".bn-glass{position:relative;overflow:hidden;isolation:isolate}.bn-glass::before{content:'';position:absolute;inset:-14%;z-index:0;background-image:var(--bn-bg,none);background-size:cover;background-position:center;filter:blur(26px) saturate(1.35)}.bn-glass::after{content:'';position:absolute;inset:0;z-index:0;background:var(--bn-veil)}.bn-glass>*{position:relative;z-index:1}.bn-glass .bn-panel{background:var(--bn-panel)!important;backdrop-filter:blur(12px) saturate(1.5);-webkit-backdrop-filter:blur(12px) saturate(1.5);box-shadow:var(--bn-bezel)!important}.bn-glass{--bn-ink:#F2F4F8;--bn-ink-2:rgba(255,255,255,.88);--bn-ink-3:rgba(255,255,255,.74);--bn-ink-4:rgba(255,255,255,.58);--bn-accent:#4FC3FF;--bn-vip:#FF8FB3;--bn-panel:rgba(24,26,32,.52);--bn-veil:rgba(0,0,0,.42);--bn-bezel:inset 0 .5px 0 rgba(255,255,255,.32),inset 0 0 0 .5px rgba(0,0,0,.3),inset 0 -1px 2px rgba(0,0,0,.18),0 2px 10px rgba(0,0,0,.35)}" + "[class~='bg-white/75']{background:rgba(24,26,32,.5)!important}[class~='bg-white/50']{background:rgba(255,255,255,.10)!important}[class~='bg-[#f5f5f5]']{background:rgba(255,255,255,.14)!important}[class~='text-[#999]']{color:rgba(255,255,255,.6)!important}[class~='text-[#666]']{color:rgba(255,255,255,.72)!important}[class~='text-[#444]']{color:rgba(255,255,255,.82)!important}[class~='text-[#18191C]']{color:#F2F4F8!important}[class~='text-[#FB7299]']{color:#FF8FB3!important}[class~='border-[#FB7299]']{border-color:#FF8FB3!important}[class~='bg-[#FB7299]']{background:#E0547F!important}";
++function bnThemeNow() {
++  const forced = typeof process !== 'undefined' && process.env ? process.env.BN_CARD_THEME : '';
++  if (forced === 'dark' || forced === 'light') return forced;
++  const h = new Date().getHours();
++  return (h >= 19 || h < 7) ? 'dark' : 'light';
++}
++function injectGlassCss(html) {
++  const dark = bnThemeNow() === 'dark';
++  let out = html.replace("</style>", (dark ? BN_DARK_CSS : BN_LIGHT_CSS) + "</style>");
++  return out;
++}
+ var ImageRenderer = class ImageRenderer {
+ 	logger;
+ 	serviceCtx;
+@@ -1472,6 +1488,8 @@
+ 			decorateCardId: void 0,
+ 			decorateCardColor: "#FFFFFF"
+ 		};
++		const __major = data.modules.module_dynamic?.major;
++		const bgImage = __major?.archive?.cover || __major?.opus?.pics?.[0]?.url || moduleAuthor.face;
+ 		const content = await buildDynamicContent(data, false);
+ 		if (content.pubTimeSuffix) pubTime += content.pubTimeSuffix;
+ 		const html = await renderCard(DynamicCard, {
+@@ -1488,7 +1506,8 @@
+ 			mainContent: content.vnode,
+ 			forwardCount: this.numberToStr(moduleStat.forward.count),
+ 			commentCount: this.numberToStr(moduleStat.comment.count),
+-			likeCount: this.numberToStr(moduleStat.like.count)
++			likeCount: this.numberToStr(moduleStat.like.count),
++			bgImage
+ 		}, {
+ 			title: "动态通知",
+ 			font: this.config.font,
+@@ -1556,9 +1575,10 @@
+ 		}
+ 		if (!this.isFetchAllowed(url)) throw new Error(`SSRF blocked: non-allowlisted image host (${url})`);
+ 		const controller = new AbortController();
+-		const timeout = setTimeout(() => controller.abort(), 1e4);
++		const timeout = setTimeout(() => controller.abort(), 2e4);
+ 		try {
+-			const response = await fetch(url, {
++			const response = await undici.fetch(url, {
++				dispatcher: IPV4_FETCH_DISPATCHER,
+ 				signal: controller.signal,
+ 				headers: {
+ 					"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+@@ -1669,6 +1689,7 @@
+ 		return dom.serialize();
+ 	}
+ 	async doRender(html, waitForCondition) {
++		html = injectGlassCss(html);
+ 		const inlinedHtml = await this.inlineRemoteImages(html);
+ 		const page = await this.puppeteer.page();
+ 		try {
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -7,6 +7,8 @@
+ import { renderToString } from "@vue/server-renderer";
+ import { Fragment, jsx, jsxs } from "vue/jsx-runtime";
+ import { readFileSync } from "node:fs";
++import { Agent, fetch as undiciFetch } from "undici";
++const IPV4_FETCH_DISPATCHER = new Agent({ connect: { family: 4 } });
+ //#region ../../node_modules/@voidzero-dev/vite-plus-core/dist/esm-shims.js
+ const getFilename = () => fileURLToPath(import.meta.url);
+ const getDirname = () => path.dirname(getFilename());
+@@ -327,13 +329,14 @@
+ //#region src/templates/dynamic-card.tsx
+ function DynamicCard(p) {
+ 	return /* @__PURE__ */ jsx("div", {
+-		class: "h-auto p-[15px]",
++		class: "h-auto p-[15px] bn-glass",
+ 		style: {
+ 			background: `linear-gradient(to right bottom, ${p.cardColorStart}, ${p.cardColorEnd})`,
+-			minWidth: "380px"
++			minWidth: "380px",
++			"--bn-bg": p.bgImage ? ("url(\"" + p.bgImage + "\")") : "none"
+ 		},
+ 		children: /* @__PURE__ */ jsxs("div", {
+-			class: "w-full overflow-hidden rounded-[12px]",
++			class: "w-full overflow-hidden rounded-[12px] bn-panel",
+ 			style: "background: rgba(255,255,255,0.82); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,0.12);",
+ 			children: [
+ 				/* @__PURE__ */ jsxs("div", {
+@@ -346,11 +349,11 @@
+ 						class: "flex flex-col gap-[3px]",
+ 						children: [/* @__PURE__ */ jsx("span", {
+ 							class: "text-[17px] font-bold leading-none",
+-							style: { color: p.upIsVip ? "#FB7299" : "#18191C" },
++							style: { color: p.upIsVip ? "var(--bn-vip)" : "var(--bn-ink)" },
+ 							children: p.upName
+ 						}), /* @__PURE__ */ jsx("span", {
+ 							class: "text-[12px]",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: p.pubTime
+ 						})]
+ 					})]
+@@ -360,14 +363,14 @@
+ 					class: "px-[16px] py-[12px] flex flex-col gap-[10px]",
+ 					children: [p.topic && /* @__PURE__ */ jsxs("div", {
+ 						class: "flex items-center gap-[5px] text-[13px] font-bold",
+-						style: "color: #00AEEC;",
++						style: "color: var(--bn-accent);",
+ 						children: [SVG_TOPIC, p.topic]
+ 					}), /* @__PURE__ */ jsx("div", { children: p.mainContent })]
+ 				}),
+ 				/* @__PURE__ */ jsx("div", { style: "height: 1px; background: rgba(0,0,0,0.06); margin: 0 16px;" }),
+ 				/* @__PURE__ */ jsxs("div", {
+ 					class: "flex justify-around px-[16px] py-[12px]",
+-					style: "color: #999;",
++					style: "color: var(--bn-ink-4);",
+ 					children: [
+ 						/* @__PURE__ */ jsxs("div", {
+ 							class: "flex items-center gap-[6px] text-[13px]",
+@@ -658,12 +661,12 @@
+ 				alt: "avatar"
+ 			}), /* @__PURE__ */ jsxs("span", {
+ 				class: "text-[13px] font-bold",
+-				style: "color: #00AEEC;",
++				style: "color: var(--bn-accent);",
+ 				children: [username, label]
+ 			})]
+ 		}), /* @__PURE__ */ jsx("div", {
+ 			class: "text-[13px]",
+-			style: "color: #444;",
++			style: "color: var(--bn-ink-2);",
+ 			children: content
+ 		})]
+ 	});
+@@ -977,10 +980,10 @@
+ 	const follower = p.hideFollower ? "" : followerText();
+ 	const description = htmlToPlain(p.data.description);
+ 	return /* @__PURE__ */ jsx("div", {
+-		class: "h-auto p-3.75",
+-		style: { background: `linear-gradient(to right bottom, ${p.cardColorStart}, ${p.cardColorEnd})` },
++		class: "h-auto p-3.75 bn-glass",
++		style: { background: `linear-gradient(to right bottom, ${p.cardColorStart}, ${p.cardColorEnd})`, "--bn-bg": (p.cover ? p.data.user_cover : p.data.keyframe) ? ("url(\"" + (p.cover ? p.data.user_cover : p.data.keyframe) + "\")") : "none" },
+ 		children: /* @__PURE__ */ jsxs("div", {
+-			class: "overflow-hidden rounded-xl",
++			class: "overflow-hidden rounded-xl bn-panel",
+ 			style: "background: rgba(255,255,255,0.82); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 360px;",
+ 			children: [
+ 				/* @__PURE__ */ jsx("div", {
+@@ -1017,7 +1020,7 @@
+ 							children: p.username
+ 						}), /* @__PURE__ */ jsx("span", {
+ 							class: "text-[12px]",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: p.liveTime
+ 						})]
+ 					})]
+@@ -1033,17 +1036,17 @@
+ 					children: [
+ 						/* @__PURE__ */ jsxs("div", {
+ 							class: "flex justify-between text-[13px]",
+-							style: "color: #666;",
++							style: "color: var(--bn-ink-3);",
+ 							children: [/* @__PURE__ */ jsx("span", { children: statsLeft() }), /* @__PURE__ */ jsxs("span", { children: ["分区：", p.data.area_name] })]
+ 						}),
+ 						follower && /* @__PURE__ */ jsx("div", {
+ 							class: "text-[13px]",
+-							style: "color: #666;",
++							style: "color: var(--bn-ink-3);",
+ 							children: follower
+ 						}),
+ 						!p.hideDesc && /* @__PURE__ */ jsx("div", {
+ 							class: "text-[13px] leading-normal",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: description || "这个主播很懒，什么简介都没写"
+ 						})
+ 					]
+@@ -1148,7 +1151,7 @@
+ 							children: p.masterName
+ 						}), /* @__PURE__ */ jsx("span", {
+ 							class: "text-[12px]",
+-							style: "color: #999;",
++							style: "color: var(--bn-ink-4);",
+ 							children: "本场直播弹幕词云"
+ 						})]
+ 					})]
+@@ -1253,6 +1256,19 @@
+ 	}
+ 	throw lastError;
+ }
++const BN_LIGHT_CSS = ".bn-glass{position:relative;overflow:hidden;isolation:isolate}.bn-glass::before{content:'';position:absolute;inset:-14%;z-index:0;background-image:var(--bn-bg,none);background-size:cover;background-position:center;filter:blur(26px) saturate(1.35)}.bn-glass::after{content:'';position:absolute;inset:0;z-index:0;background:var(--bn-veil)}.bn-glass>*{position:relative;z-index:1}.bn-glass .bn-panel{background:var(--bn-panel)!important;backdrop-filter:blur(12px) saturate(1.5);-webkit-backdrop-filter:blur(12px) saturate(1.5);box-shadow:var(--bn-bezel)!important}.bn-glass{--bn-ink:#18191C;--bn-ink-2:#444;--bn-ink-3:#666;--bn-ink-4:#999;--bn-accent:#00AEEC;--bn-vip:#FB7299;--bn-panel:rgba(255,255,255,.74);--bn-veil:rgba(255,255,255,.45);--bn-bezel:inset 0 .5px 0 rgba(255,255,255,.85),inset 0 0 0 .5px rgba(255,255,255,.35),inset 0 -1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.12)}";
++const BN_DARK_CSS = ".bn-glass{position:relative;overflow:hidden;isolation:isolate}.bn-glass::before{content:'';position:absolute;inset:-14%;z-index:0;background-image:var(--bn-bg,none);background-size:cover;background-position:center;filter:blur(26px) saturate(1.35)}.bn-glass::after{content:'';position:absolute;inset:0;z-index:0;background:var(--bn-veil)}.bn-glass>*{position:relative;z-index:1}.bn-glass .bn-panel{background:var(--bn-panel)!important;backdrop-filter:blur(12px) saturate(1.5);-webkit-backdrop-filter:blur(12px) saturate(1.5);box-shadow:var(--bn-bezel)!important}.bn-glass{--bn-ink:#F2F4F8;--bn-ink-2:rgba(255,255,255,.88);--bn-ink-3:rgba(255,255,255,.74);--bn-ink-4:rgba(255,255,255,.58);--bn-accent:#4FC3FF;--bn-vip:#FF8FB3;--bn-panel:rgba(24,26,32,.52);--bn-veil:rgba(0,0,0,.42);--bn-bezel:inset 0 .5px 0 rgba(255,255,255,.32),inset 0 0 0 .5px rgba(0,0,0,.3),inset 0 -1px 2px rgba(0,0,0,.18),0 2px 10px rgba(0,0,0,.35)}" + "[class~='bg-white/75']{background:rgba(24,26,32,.5)!important}[class~='bg-white/50']{background:rgba(255,255,255,.10)!important}[class~='bg-[#f5f5f5]']{background:rgba(255,255,255,.14)!important}[class~='text-[#999]']{color:rgba(255,255,255,.6)!important}[class~='text-[#666]']{color:rgba(255,255,255,.72)!important}[class~='text-[#444]']{color:rgba(255,255,255,.82)!important}[class~='text-[#18191C]']{color:#F2F4F8!important}[class~='text-[#FB7299]']{color:#FF8FB3!important}[class~='border-[#FB7299]']{border-color:#FF8FB3!important}[class~='bg-[#FB7299]']{background:#E0547F!important}";
++function bnThemeNow() {
++  const forced = typeof process !== 'undefined' && process.env ? process.env.BN_CARD_THEME : '';
++  if (forced === 'dark' || forced === 'light') return forced;
++  const h = new Date().getHours();
++  return (h >= 19 || h < 7) ? 'dark' : 'light';
++}
++function injectGlassCss(html) {
++  const dark = bnThemeNow() === 'dark';
++  let out = html.replace("</style>", (dark ? BN_DARK_CSS : BN_LIGHT_CSS) + "</style>");
++  return out;
++}
+ var ImageRenderer = class ImageRenderer {
+ 	logger;
+ 	serviceCtx;
+@@ -1477,6 +1493,8 @@
+ 			decorateCardId: void 0,
+ 			decorateCardColor: "#FFFFFF"
+ 		};
++		const __major = data.modules.module_dynamic?.major;
++		const bgImage = __major?.archive?.cover || __major?.opus?.pics?.[0]?.url || moduleAuthor.face;
+ 		const content = await buildDynamicContent(data, false);
+ 		if (content.pubTimeSuffix) pubTime += content.pubTimeSuffix;
+ 		const html = await renderCard(DynamicCard, {
+@@ -1493,7 +1511,8 @@
+ 			mainContent: content.vnode,
+ 			forwardCount: this.numberToStr(moduleStat.forward.count),
+ 			commentCount: this.numberToStr(moduleStat.comment.count),
+-			likeCount: this.numberToStr(moduleStat.like.count)
++			likeCount: this.numberToStr(moduleStat.like.count),
++			bgImage
+ 		}, {
+ 			title: "动态通知",
+ 			font: this.config.font,
+@@ -1561,9 +1580,10 @@
+ 		}
+ 		if (!this.isFetchAllowed(url)) throw new Error(`SSRF blocked: non-allowlisted image host (${url})`);
+ 		const controller = new AbortController();
+-		const timeout = setTimeout(() => controller.abort(), 1e4);
++		const timeout = setTimeout(() => controller.abort(), 2e4);
+ 		try {
+-			const response = await fetch(url, {
++			const response = await undiciFetch(url, {
++				dispatcher: IPV4_FETCH_DISPATCHER,
+ 				signal: controller.signal,
+ 				headers: {
+ 					"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+@@ -1674,6 +1694,7 @@
+ 		return dom.serialize();
+ 	}
+ 	async doRender(html, waitForCondition) {
++		html = injectGlassCss(html);
+ 		const inlinedHtml = await this.inlineRemoteImages(html);
+ 		const page = await this.puppeteer.page();
+ 		try {
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@bilibili-notify/image",
+-  "version": "0.0.1-alpha.2",
++  "version": "0.0.1-alpha.2-hotfix.2",
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/Akokk0/bilibili-notify"
+@@ -33,7 +33,8 @@
+     "jsdom": "^26.1.0",
+     "luxon": "^3.5.0",
+     "vue": "^3.5.32",
+-    "@bilibili-notify/internal": "^0.1.0-alpha.2"
++    "@bilibili-notify/internal": "^0.1.0-alpha.2",
++    "undici": "^6.18.2"
+   },
+   "devDependencies": {
+     "@types/jsdom": "^21.1.7",
+@@ -47,4 +48,4 @@
+     "dev": "vp pack --watch",
+     "typecheck": "tsc --noEmit"
+   }
+-}
+\ No newline at end of file
++}

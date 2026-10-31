@@ -22,7 +22,7 @@
 | 01 | `koishi-plugin-bilibili-notify` | `5.0.0-alpha.5-hotfix.2` | `5.0.0-alpha.5` | 新增私聊二维码登录命令 `bili login`：`validateQrLoginSession()` 校验（限主人私聊 + 配置的平台）、订阅 `bilibili-notify/login-status-report` 事件、扫码后提示确认、成功/失败各回一条；登录触发改为直接调用 `beginLogin()` |
 | 02 | `@bilibili-notify/api` | `0.2.0-alpha.2-hotfix.15` | `0.2.0-alpha.2` | 登录保活三件套（见下节） |
 | 03 | `@bilibili-notify/push` | `2.0.0-alpha.1-hotfix.1` | `2.0.0-alpha.1` | master 可达性启动虚警：改为 2s 间隔、最多 90s 的有界轮询（onebot 反向 WS 实测 6~10s 才上线，固定 10s 单次判定必误报）；删掉发送私信前的 `refreshMasterReachability()` 拦截 |
-| 04 | `@bilibili-notify/image` | `0.0.1-alpha.2-hotfix.1` | `0.0.1-alpha.2` | 图片预取改用 `undici.Agent({ connect: { family: 4 } })` 强制 IPv4（hdslb 解析到 IPv6 时 Node 侧连不通，头像/封面被替换成透明占位）；超时 10s → 20s |
+| 04 | `@bilibili-notify/image` | `0.0.1-alpha.2-hotfix.2` | `0.0.1-alpha.2` | ①图片预取改用 `undici.Agent({ connect: { family: 4 } })` 强制 IPv4（hdslb 解析到 IPv6 时 Node 侧连不通，头像/封面被替换成透明占位），超时 10s → 20s。②玻璃卡 + 日夜双主题（见下节） |
 | 05 | `@bilibili-notify/live` | `0.1.0-alpha.9-hotfix.0` | `0.1.0-alpha.9` | 弹幕连接预检被风控（-352）时不再回退「直接建连」，改为稍后重试；把预检拿到的 `token` / `host` / `port` 透传给 `startListen()`，避免二次请求再吃 -352 |
 
 ## 登录保活（补丁 02）的三个要点
@@ -45,7 +45,31 @@
 生产实例自 2026-10 起长期未掉线，因此暂未重放；若再次出现「一次成功刷新后、约 72 小时回 -101」，
 应优先补这个修复。
 
-## 上游对照（截至 2026-10-31）
+## 玻璃卡与日夜双主题（补丁 04 的第二部分）
+
+配方取自 [aura-music](https://github.com/dingyi222666/aura-music) 的 `packages/view/src/style.css`：
+半透明填充 + `backdrop-filter: blur(12px) saturate(1.5)` + 0.5px 发丝线 + 四层 bezel
+（顶部高光唇 / 细暗环 / 底部内阴影 / 外投影）。
+
+- **卡片是独立截图，背后没有页面**，照抄 `backdrop-filter` 只会得到一块纯色板。所以用封面自身
+  放大 14% + `blur(26px) saturate(1.35)` 当"背后的内容"，通过 `--bn-bg` 变量注入：
+  动态卡取 `archive.cover` → `opus.pics[0]` → 头像；直播卡取 `user_cover` / `keyframe`。
+- **日夜切换**：`bnThemeNow()` 读 `new Date().getHours()`，19:00–7:00 深色、其余浅色；
+  环境变量 `BN_CARD_THEME=light|dark` 可强制（调试或想固定一种时用）。
+  浅色面板 `rgba(255,255,255,.74)` + 白色柔光 45%；深色面板 `rgba(24,26,32,.52)` + 黑色柔光 42%。
+- 模板里 11 处硬编码文字色改为 CSS 变量（`--bn-ink` / `--bn-ink-2..4` / `--bn-accent` / `--bn-vip`），
+  深浅两套取值；未改任何图标与排版，六个 SVG 图标（播放量 / 弹幕 / 转发 / 评论 / 点赞 / 时长）原样保留。
+
+三个踩过的坑：
+
+1. UnoCSS 的 utility 类名（`text-[#18191C]`、`bg-white/75`）**不能用 CSS 转义选择器覆盖** ——
+   `.text-\[\#18191C\]` 在生成进 bundle 的 JS 字符串时转义会被吃掉，规则失效（现象：深色下标题仍是深灰）。
+   改用属性选择器 `[class~='text-[#18191C]']` 绕开转义。
+2. 属性选择器的引号**必须用单引号**，否则拼进双引号 JS 字符串会截断语法。
+3. 注入点选 `html.replace("</style>", CSS + "</style>")`（首个 style 块末尾），
+   比改模板里的 style 字符串安全得多；`doRender()` 是唯一入口。
+
+
 
 - 补丁 03 已被上游 `@bilibili-notify/push@2.0.0-alpha.2` 覆盖（改用 `recheckMasterReachability()` 在
   `login-added` / `login-updated` 事件复检，比轮询干净）。
